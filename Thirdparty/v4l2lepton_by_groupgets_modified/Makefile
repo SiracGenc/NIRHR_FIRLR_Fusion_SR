@@ -8,10 +8,10 @@ INCPATH = -I. -I../raspberrypi_libs
 all: sdk leptsci.o SPI.o Lepton_I2C.o Palettes.o v4l2lepton
 
 sdk:
-	make -C ../raspberrypi_libs/leptonSDKEmb32PUB
+	make -C ./leptonSDKEmb32PUB
 
 sdkclean:
-	make -C ../raspberrypi_libs/leptonSDKEmb32PUB clean
+	make -C ./leptonSDKEmb32PUB clean
 
 Palettes.o: Palettes.cpp Palettes.h
 	${CXX} -c ${CXXFLAGS} ${INCPATH} -o Palettes.o Palettes.cpp

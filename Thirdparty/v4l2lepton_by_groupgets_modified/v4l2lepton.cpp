@@ -21,9 +21,9 @@
 #define PACKETS_PER_SEGMENT 60   // telemetry disabled (Lepton 2.x frame, Lepton 3.x segment)
 #define FPS 27
 
-static char const *v4l2dev = "/dev/video1";
-static char const *spidev_default = "/dev/spidev0.1";
-static char const *spidev = NULL;
+static const char *v4l2dev = "/dev/video1";
+static const char *spidev_default = "/dev/spidev0.1"; // 仅用于 usage 打印
+static char *spidev = NULL;                            // 注意：改回 char*
 
 static int v4l2sink = -1;
 static int width = 80;
@@ -66,7 +66,7 @@ static void usage(char *exec) {
   );
 }
 
-static const char short_options[] = "d:hv:tl:of:cm:";
+static const char short_options[] = "d:hv:";
 static const struct option long_options[] = {
   { "device",   required_argument, NULL, 'd' },
   { "help",     no_argument,       NULL, 'h' },
@@ -122,8 +122,7 @@ static void open_vpipe() {
 }
 
 static void init_device() {
-  if (!spidev) spidev = spidev_default;
-  SpiOpenPort(spidev);
+  SpiOpenPort(spidev);   // spidev==NULL 时，SPI.cpp 会默认打开 /dev/spidev0.1
 }
 
 static void stop_device() {
@@ -305,7 +304,7 @@ int main(int argc, char **argv) {
   // parse args
   for (;;) {
     int index = 0;
-    int c = getopt_long(argc, argv, "", long_options, &index);
+    int c = getopt_long(argc, argv, short_options, long_options, &index);
     if (c == -1) break;
 
     switch (c) {

@@ -1,0 +1,1 @@
+./v4l2lepton -v /dev/video42 -d /dev/spidev0.0 --type 3 --out rgb --colormap 3 --spi-mhz 20 -V

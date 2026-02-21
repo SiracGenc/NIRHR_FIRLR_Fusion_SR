@@ -12,6 +12,13 @@ from gi.repository import Gst, GstRtspServer, Gtk  # noqa: E402
 
 Gst.init(None)
 
+from fractions import Fraction
+
+def fps_to_fraction_str(fps: float) -> str:
+    fr = Fraction(str(fps)).limit_denominator(100)  # 8.7 -> 87/10
+    if fr.numerator <= 0:
+        fr = Fraction(9, 1)
+    return f"{fr.numerator}/{fr.denominator}"
 
 def list_v4l2_devices():
     devs = []
@@ -225,9 +232,9 @@ class DualRtspGui(Gtk.Window):
             f")"
         )
 
-    def _build_th_launch(self, dev: str, w: int, h: int, fps: int, bitrate_kbps: int) -> str:
+    def _build_th_launch(self, dev: str, w: int, h: int, fps_float: float, bitrate_kbps: int) -> str:
         bitrate_kbps = max(100, bitrate_kbps)
-        fr = f"{fps}/1"
+        fr = fps_to_fraction_str(fps_float)
 
         # 不在 v4l2src 上强制 framerate，改用 videorate 降帧
         return (

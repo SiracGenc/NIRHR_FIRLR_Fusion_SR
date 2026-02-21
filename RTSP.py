@@ -243,11 +243,29 @@ class DualRtspGui(Gtk.Window):
             f")"
         )
 
+    def _on_bus_message(self, bus, message, path: str):
+        t = message.type
+        if t == Gst.MessageType.ERROR:
+            err, dbg = message.parse_error()
+            print(f"[RTSP][{path}] ERROR: {err.message}")
+            if dbg:
+                print(f"[RTSP][{path}] DEBUG: {dbg}")
+        elif t == Gst.MessageType.WARNING:
+            err, dbg = message.parse_warning()
+            print(f"[RTSP][{path}] WARNING: {err.message}")
+            if dbg:
+                print(f"[RTSP][{path}] DEBUG: {dbg}")
+
+    def _on_media_configure(self, factory, media, path: str):
+        # called when a client connects and media is created
+        element = media.get_element()
+        bus = element.get_bus()
+        bus.add_signal_watch()
+        bus.connect("message", lambda b, m: self._on_bus_message(b, m, path))
+
     def _set_factory(self, path: str, launch: str):
-        # RTSP default factory creates a pipeline from a launch description. :contentReference[oaicite:6]{index=6}
-        # The launch must contain pay%d elements (e.g., pay0). :contentReference[oaicite:7]{index=7}
         try:
-            Gst.parse_launch(launch)
+            Gst.parse_launch(launch)  # syntax check only
         except Exception as e:
             print(f"[ERROR] Launch parse failed for {path}: {e}")
             print("Launch:", launch)
@@ -256,6 +274,9 @@ class DualRtspGui(Gtk.Window):
         factory = GstRtspServer.RTSPMediaFactory()
         factory.set_launch(launch)
         factory.set_shared(True)
+
+        # IMPORTANT: hook errors when clients connect
+        factory.connect("media-configure", lambda f, m: self._on_media_configure(f, m, path))
 
         try:
             self.mounts.remove_factory(path)

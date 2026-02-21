@@ -1,19 +1,8 @@
-
-#Dependences
-"""
-sudo apt update
-sudo apt install -y \
-  python3-gi python3-gi-cairo gir1.2-gtk-3.0 \
-  gir1.2-gst-rtsp-server-1.0 \
-  gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
-  gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
-  gstreamer1.0-libcamera \
-  v4l-utils
-"""
 #!/usr/bin/env python3
 import os
 import glob
 import argparse
+from fractions import Fraction
 
 import gi
 gi.require_version("Gst", "1.0")
@@ -46,6 +35,52 @@ def clamp_int(x, lo, hi, default):
     return max(lo, min(hi, v))
 
 
+def clamp_float(x, lo, hi, default):
+    try:
+        v = float(x)
+    except Exception:
+        return default
+    return max(lo, min(hi, v))
+
+
+def fps_to_fraction_str(fps: float) -> str:
+    # GStreamer caps framerate expects a rational; keep it simple and stable
+    # e.g. 8.7 -> 87/10, 30 -> 30/1
+    fr = Fraction(fps).limit_denominator(100)
+    if fr.numerator <= 0:
+        fr = Fraction(9, 1)
+    return f"{fr.numerator}/{fr.denominator}"
+
+
+def has_element(name: str) -> bool:
+    return Gst.ElementFactory.find(name) is not None
+
+
+def build_h264_encoder_chain(bitrate_kbps: int) -> str:
+    """
+    Prefer v4l2h264enc on RPi, fallback to x264enc if unavailable.
+    Note: v4l2h264enc bitrate/controls behavior differs across versions (Bullseye vs Bookworm). :contentReference[oaicite:4]{index=4}
+    """
+    bitrate_kbps = max(100, int(bitrate_kbps))
+    bitrate_bps = bitrate_kbps * 1000
+
+    if has_element("v4l2h264enc"):
+        # Keep extra-controls for older stacks; newer stacks may use caps-based control.
+        # This still avoids launch failure by having a valid encoder element.
+        return (
+            f"v4l2h264enc extra-controls=\"controls,video_bitrate={bitrate_bps},repeat_sequence_header=1\" "
+            f"! h264parse config-interval=1 "
+            f"! rtph264pay name=pay0 pt=96 config-interval=1"
+        )
+
+    # software fallback (always available if plugins-ugly installed)
+    return (
+        f"x264enc tune=zerolatency speed-preset=ultrafast bitrate={bitrate_kbps} key-int-max=30 "
+        f"! h264parse config-interval=1 "
+        f"! rtph264pay name=pay0 pt=96 config-interval=1"
+    )
+
+
 class DualRtspGui(Gtk.Window):
     def __init__(self, port: int, gs_path: str, th_path: str):
         super().__init__(title="Dual RTSP (GS + Thermal)")
@@ -55,7 +90,6 @@ class DualRtspGui(Gtk.Window):
         self.th_path = th_path if th_path.startswith("/") else "/" + th_path
 
         self.server = GstRtspServer.RTSPServer()
-        # bind all interfaces (ethernet/wifi)
         self.server.props.address = "0.0.0.0"
         self.server.props.service = str(self.port)
 
@@ -68,7 +102,7 @@ class DualRtspGui(Gtk.Window):
 
     def _build_ui(self):
         self.set_border_width(10)
-        self.set_default_size(520, 380)
+        self.set_default_size(560, 420)
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self.add(outer)
@@ -106,12 +140,12 @@ class DualRtspGui(Gtk.Window):
         th_frame.add(th_box)
 
         self.th_dev_combo = Gtk.ComboBoxText()
-        self._refresh_v4l2_combo()
+        self._refresh_v4l2_combo(select_prefer_loopback=True)
 
-        self.th_w = Gtk.Entry(text="640")
-        self.th_h = Gtk.Entry(text="480")
-        self.th_fps = Gtk.Entry(text="9")
-        self.th_bitrate = Gtk.Entry(text="1000")  # kbps
+        self.th_w = Gtk.Entry(text="160")
+        self.th_h = Gtk.Entry(text="120")
+        self.th_fps = Gtk.Entry(text="9")          # avoid confusion; allow decimal but default to 9
+        self.th_bitrate = Gtk.Entry(text="1000")   # kbps
 
         th_box.pack_start(self._row("Device", self.th_dev_combo, ""), False, False, 0)
         th_box.pack_start(self._row("Scale Width", self.th_w, "px"), False, False, 0)
@@ -122,12 +156,11 @@ class DualRtspGui(Gtk.Window):
         grid.attach(gs_frame, 0, 0, 1, 1)
         grid.attach(th_frame, 1, 0, 1, 1)
 
-        # Buttons
         btn_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         outer.pack_start(btn_row, False, False, 0)
 
         self.btn_refresh = Gtk.Button(label="Refresh /dev/video*")
-        self.btn_refresh.connect("clicked", lambda _b: self._refresh_v4l2_combo())
+        self.btn_refresh.connect("clicked", lambda _b: self._refresh_v4l2_combo(select_prefer_loopback=True))
         btn_row.pack_start(self.btn_refresh, True, True, 0)
 
         self.btn_apply = Gtk.Button(label="Apply (new clients)")
@@ -142,7 +175,7 @@ class DualRtspGui(Gtk.Window):
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         lab = Gtk.Label(label=key)
         lab.set_xalign(0.0)
-        lab.set_size_request(110, -1)
+        lab.set_size_request(120, -1)
         row.pack_start(lab, False, False, 0)
 
         row.pack_start(widget, True, True, 0)
@@ -155,57 +188,75 @@ class DualRtspGui(Gtk.Window):
 
         return row
 
-    def _refresh_v4l2_combo(self):
+    def _refresh_v4l2_combo(self, select_prefer_loopback: bool = False):
         self.th_dev_combo.remove_all()
         devs = list_v4l2_devices()
         if not devs:
             self.th_dev_combo.append_text("/dev/video0 (not found in sysfs)")
             self.th_dev_combo.set_active(0)
             return
-        for dev, name in devs:
+
+        preferred_idx = 0
+        for idx, (dev, name) in enumerate(devs):
             self.th_dev_combo.append_text(f"{dev}  —  {name}")
-        self.th_dev_combo.set_active(0)
+            if select_prefer_loopback:
+                low = name.lower()
+                if ("loopback" in low) or ("lepton" in low) or ("v4l2 loopback" in low):
+                    preferred_idx = idx
+
+        self.th_dev_combo.set_active(preferred_idx)
 
     def _selected_thermal_dev(self) -> str:
         txt = self.th_dev_combo.get_active_text() or "/dev/video0"
         return txt.split("—")[0].strip()
 
     def _build_gs_launch(self, w: int, h: int, fps: int, bitrate_kbps: int) -> str:
-        bitrate = max(100, bitrate_kbps) * 1000
-        # NV12 -> H264 (try HW v4l2 encoder)
+        fr = f"{fps}/1"
+        enc = build_h264_encoder_chain(bitrate_kbps)
+        # Add videoconvert to improve compatibility across encoders
         return (
             f"( "
-            f"libcamerasrc ! video/x-raw,width={w},height={h},framerate={fps}/1,format=NV12 "
-            f"! queue "
-            f"! v4l2h264enc extra-controls=\"controls,video_bitrate={bitrate},repeat_sequence_header=1\" "
-            f"! h264parse config-interval=1 "
-            f"! rtph264pay name=pay0 pt=96 config-interval=1 "
+            f"libcamerasrc "
+            f"! video/x-raw,width={w},height={h},framerate={fr},format=NV12 "
+            f"! queue leaky=downstream max-size-buffers=2 "
+            f"! videoconvert ! video/x-raw,format=I420 "
+            f"! queue leaky=downstream max-size-buffers=2 "
+            f"! {enc} "
             f")"
         )
 
-    def _build_th_launch(self, dev: str, w: int, h: int, fps: int, bitrate_kbps: int) -> str:
-        bitrate = max(100, bitrate_kbps) * 1000
-        # Accept whatever raw comes from /dev/videoX, convert/scale to I420 then encode
+    def _build_th_launch(self, dev: str, w: int, h: int, fps_float: float, bitrate_kbps: int) -> str:
+        fr = fps_to_fraction_str(fps_float)
+        enc = build_h264_encoder_chain(bitrate_kbps)
+
+        # Force input caps for Lepton loopback to reduce negotiation failures
+        # v4l2src is capture source. :contentReference[oaicite:5]{index=5}
         return (
             f"( "
-            f"v4l2src device={dev} ! video/x-raw,framerate={fps}/1 "
-            f"! queue "
-            f"! videoconvert "
-            f"! videoscale "
+            f"v4l2src device={dev} "
+            f"! video/x-raw,format=RGB,width=160,height=120,framerate={fr} "
+            f"! queue leaky=downstream max-size-buffers=2 "
+            f"! videoconvert ! videoscale "
             f"! video/x-raw,width={w},height={h},format=I420 "
-            f"! queue "
-            f"! v4l2h264enc extra-controls=\"controls,video_bitrate={bitrate},repeat_sequence_header=1\" "
-            f"! h264parse config-interval=1 "
-            f"! rtph264pay name=pay0 pt=96 config-interval=1 "
+            f"! queue leaky=downstream max-size-buffers=2 "
+            f"! {enc} "
             f")"
         )
 
     def _set_factory(self, path: str, launch: str):
+        # RTSP default factory creates a pipeline from a launch description. :contentReference[oaicite:6]{index=6}
+        # The launch must contain pay%d elements (e.g., pay0). :contentReference[oaicite:7]{index=7}
+        try:
+            Gst.parse_launch(launch)
+        except Exception as e:
+            print(f"[ERROR] Launch parse failed for {path}: {e}")
+            print("Launch:", launch)
+            return
+
         factory = GstRtspServer.RTSPMediaFactory()
         factory.set_launch(launch)
         factory.set_shared(True)
 
-        # replace existing
         try:
             self.mounts.remove_factory(path)
         except Exception:
@@ -222,9 +273,9 @@ class DualRtspGui(Gtk.Window):
         gs_br = clamp_int(self.gs_bitrate.get_text(), 100, 200000, 4000)
 
         th_dev = self._selected_thermal_dev()
-        th_w = clamp_int(self.th_w.get_text(), 16, 7680, 640)
-        th_h = clamp_int(self.th_h.get_text(), 16, 4320, 480)
-        th_fps = clamp_int(self.th_fps.get_text(), 1, 60, 9)
+        th_w = clamp_int(self.th_w.get_text(), 16, 7680, 160)
+        th_h = clamp_int(self.th_h.get_text(), 16, 4320, 120)
+        th_fps = clamp_float(self.th_fps.get_text(), 1.0, 60.0, 9.0)
         th_br = clamp_int(self.th_bitrate.get_text(), 100, 200000, 1000)
 
         gs_launch = self._build_gs_launch(gs_w, gs_h, gs_fps, gs_br)

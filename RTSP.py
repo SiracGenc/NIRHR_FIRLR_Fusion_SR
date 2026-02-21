@@ -225,21 +225,25 @@ class DualRtspGui(Gtk.Window):
             f")"
         )
 
-    def _build_th_launch(self, dev: str, w: int, h: int, fps_float: float, bitrate_kbps: int) -> str:
-        fr = fps_to_fraction_str(fps_float)
-        enc = build_h264_encoder_chain(bitrate_kbps)
+    def _build_th_launch(self, dev: str, w: int, h: int, fps: int, bitrate_kbps: int) -> str:
+        bitrate_kbps = max(100, bitrate_kbps)
+        fr = f"{fps}/1"
 
-        # Force input caps for Lepton loopback to reduce negotiation failures
-        # v4l2src is capture source. :contentReference[oaicite:5]{index=5}
+        # 不在 v4l2src 上强制 framerate，改用 videorate 降帧
         return (
             f"( "
-            f"v4l2src device={dev} "
-            f"! video/x-raw,format=RGB,width=160,height=120,framerate={fr} "
+            f"v4l2src device={dev} do-timestamp=true "
+            f"! video/x-raw,format=RGB,width=160,height=120 "
             f"! queue leaky=downstream max-size-buffers=2 "
-            f"! videoconvert ! videoscale "
+            f"! videoconvert "
+            f"! videorate "
+            f"! video/x-raw,framerate={fr} "
+            f"! videoscale "
             f"! video/x-raw,width={w},height={h},format=I420 "
             f"! queue leaky=downstream max-size-buffers=2 "
-            f"! {enc} "
+            f"! x264enc tune=zerolatency speed-preset=ultrafast bitrate={bitrate_kbps} key-int-max=30 "
+            f"! h264parse config-interval=1 "
+            f"! rtph264pay name=pay0 pt=96 config-interval=1 "
             f")"
         )
 

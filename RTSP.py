@@ -12,8 +12,6 @@ from gi.repository import Gst, GstRtspServer, Gtk  # noqa: E402
 
 Gst.init(None)
 
-from fractions import Fraction
-
 def fps_to_fraction_str(fps: float) -> str:
     fr = Fraction(str(fps)).limit_denominator(100)  # 8.7 -> 87/10
     if fr.numerator <= 0:
@@ -50,15 +48,6 @@ def clamp_float(x, lo, hi, default):
     return max(lo, min(hi, v))
 
 
-def fps_to_fraction_str(fps: float) -> str:
-    # GStreamer caps framerate expects a rational; keep it simple and stable
-    # e.g. 8.7 -> 87/10, 30 -> 30/1
-    fr = Fraction(fps).limit_denominator(100)
-    if fr.numerator <= 0:
-        fr = Fraction(9, 1)
-    return f"{fr.numerator}/{fr.denominator}"
-
-
 def has_element(name: str) -> bool:
     return Gst.ElementFactory.find(name) is not None
 
@@ -66,7 +55,7 @@ def has_element(name: str) -> bool:
 def build_h264_encoder_chain(bitrate_kbps: int) -> str:
     """
     Prefer v4l2h264enc on RPi, fallback to x264enc if unavailable.
-    Note: v4l2h264enc bitrate/controls behavior differs across versions (Bullseye vs Bookworm). :contentReference[oaicite:4]{index=4}
+    Note: v4l2h264enc bitrate/controls behavior differs across versions (Bullseye vs Bookworm).
     """
     bitrate_kbps = max(100, int(bitrate_kbps))
     bitrate_bps = bitrate_kbps * 1000

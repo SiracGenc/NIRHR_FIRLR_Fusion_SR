@@ -6,6 +6,24 @@
 
 ---
 
+## AI Assistance / AI 辅助声明
+
+**English**
+
+Portions of this repository (e.g., documentation, code comments, or code drafts) may have been created or refined with the assistance of generative AI tools (for example, GitHub Copilot / ChatGPT).
+All AI-assisted output was reviewed, edited, and validated by the repository maintainers, who take full responsibility for the content, correctness, licensing compliance, and security of this project.
+
+If you contribute using generative AI, please disclose it in your pull request description (tool + scope), and ensure you have the rights to submit the content.
+
+**中文**
+
+本仓库的部分内容（如文档、注释或代码草稿）可能在生成式 AI 工具（例如 GitHub Copilot / ChatGPT）的辅助下完成。
+所有 AI 辅助产出均已由维护者进行人工审查、修改与验证；维护者对项目的内容正确性、许可合规性与安全性承担最终责任。
+
+如果你在贡献中使用了生成式 AI，请在 PR 描述中披露（工具 + 范围），并确保你有权提交相关内容。
+
+---
+
 ## Language / 语言切换
 
 - [English](#english)
